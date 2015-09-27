@@ -1,0 +1,174 @@
+---
+title: "Practical Machine Learning Assignment - week 3"
+author: "Francois Ragnet"
+date: "Sunday, September 27, 2015"
+output: html_document
+---
+#Summary
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+In this project, we used data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. We built a Machine Learning model to try and predict the classe of outcome, then tested on a few validation sets.
+More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+#Data Processing and Analysis
+
+##Loading and preprocessing the data
+We will download the main file from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv and the much smaller validation file from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv.
+We will be using the first dataset for our model building (split into training and testing), then the second dataset as evaluation.
+```{r results="hide", cache=TRUE}
+# setwd("C:\\Local\\My local Documents\\Training\\Data Analytics\\Practical machine learning\\Project")
+# download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", dest="pml-training.csv")
+# download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", dest="pml-testing.csv")
+#pmlMainFULL<-read.csv("pml-training.csv", na.strings=c("NA", "#DIV/0!", ""), stringsAsFactors=FALSE)
+pmlMainFULL<-read.csv("pml-training.csv", na.strings=c("NA", "#DIV/0!", ""), stringsAsFactors=TRUE)
+pmlValidation<-read.csv("pml-testing.csv", na.strings=c("NA", "#DIV/0!", ""), , stringsAsFactors=FALSE)
+```
+
+##Creating the training and test set; Preparing the data
+A quick analysis of the data shows that many columns are near-empty, or even totally empty.
+```{r, cache=TRUE}
+hist(colSums(is.na(pmlMainFULL)), main="Histogram of number of NA values per column", breaks = 100, xlab = "Number of NA values per column", ylab = "Number of columns", col="red")
+sum((colSums(is.na(pmlMainFULL))>19000)==TRUE)
+sum((colSums(is.na(pmlMainFULL))==0)==TRUE)
+```
+60 columns have no NA values, while the other 100 rows are empty or almost (over 19000 NA values, out of 19622). 
+With only a few NA values, we could have tried to impute, but that will most likely not work here since there is so much missing data. 
+Let's remove these last columns from our main dataset, and apply the same pre-processing to our Validation set.
+
+```{r, cache=TRUE}
+pmlMain<-pmlMainFULL[,colSums(is.na(pmlMainFULL))==0]
+pmlValidation<-pmlValidation[,colSums(is.na(pmlValidation)) == 0]
+```
+
+Let's see a summary of our variables, then pair-plot the first variables, which are not sensor variables.
+
+```{r, cache=TRUE}
+summary(pmlMain[,1:10])
+```
+
+```{r, cache=TRUE}
+library(caret); library(kernlab)
+featurePlot(x=pmlMain[,c("X","user_name","raw_timestamp_part_2","num_window")],y=pmlMain$classe,plot="pairs")
+```
+
+These look like strange - X in has almost perfect correlation with classe, our outcome, and some of the time stamp variables appear to be the same. 
+X is most likely an index after ordering by classe, or and/or experiments were ordered by time and by "classe".
+
+Let's not use those variables in dataset and focus our training solely on sensor data.
+
+```{r, cache=TRUE}
+pmlMain<-pmlMain[,-c(1:7)]
+pmlValidation<-pmlValidation[,-c(1:7)]
+```
+
+#Preparing the dataset
+First, let's create a training set and a testing set, using 75% of samples for training.
+```{r, cache=TRUE}
+set.seed(7081971)
+inTrain<-createDataPartition(y=pmlMain$classe, p=0.75, list = FALSE)
+trainingPML<-pmlMain[inTrain,]
+testingPML<-pmlMain[-inTrain,]
+```
+
+#Building Machine Learning Models.
+In this part we'll try a few categorization models that can produce a factor output, plot the importance of the variables, then build a few models and estimate the Out-of-Sample Error rate.
+
+Let's first set our code to use multiple cores - if not, training certain models can be extremely long.
+```{r, cache=TRUE, echo=FALSE}
+library(doParallel)
+registerDoParallel(cores=3)
+```
+
+##Gradient Boosted Model training
+Let's start with a boosted tree model.
+```{r, cache=TRUE, echo=FALSE}
+#Build our model
+modFitGBM<-train(classe~.,method="gbm",data=trainingPML)
+```
+
+Let's look at a summary of our  model, including variable importance.
+```{r, cache=TRUE}
+#Plot variable importance
+plot(varImp(modFitGBM))
+```
+
+###GBM Prediction Accuracy and Error rate
+We can now predict on the testing dataset and estimate accuracy of the model.
+
+```{r, cache=TRUE}
+predictions<-predict(modFitGBM, newdata=testingPML)
+#Estimate Prediction accuracy
+confusionMatrix(predictions, testingPML$classe)
+```
+
+Results look good. The **out-of-sample error rate is around 4%**, with the confidence intervals above.
+
+##Evaluation on the test dataset
+
+```{r}
+predictions<-predict(modFitGBM, newdata=pmlValidation)
+#Estimate Prediction accuracy
+```
+
+Let's create one file per answer using the following function:
+
+```{r, cache=TRUE}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+```
+Let's write our predictions in the results subdirectory:
+```{r, cache=TRUE}
+dir.create("GBMresults")
+setwd("results")
+pml_write_files(predictions)
+```
+
+#Further investigations
+
+By lack of time, I was not able to re-train many other categorizers without the non-sensor data. I had trained most of the categorizers below on the full dataset (excluding X, but not the various timestamps), until realizing I should exclude them from the predictors as they seem to produce results too good to be true.
+
+##RPART
+```{r, cache=TRUE}
+modFitRPART<-train(classe~.,method="rpart",data=trainingPML)
+plot(varImp(modFitRPART))
+predictions<-predict(modFitRPART, newdata=testingPML)
+confusionMatrix(predictions, testingPML$classe)
+```
+The important variables are not the same, which is suspicious. This model is not working well, as the Accuracy shows. 
+
+##GBM PCA
+```{r, cache=TRUE}
+#Estimate Error rates
+# modFitGBMPCA<-train(classe~.,method="gbm",preProcess="pca",data=trainingPML)
+# predictions<-predict(modFitGBMPCA, newdata=testingPML)
+# confusionMatrix(predictions, testingPML$classe)
+```
+##Random Forest
+```{r, cache=TRUE}
+#Estimate Error rates
+# modFitRF<-train(classe~.,method="rf",data=trainingPML)
+# plot(varImp(modFitRF))
+# predictions<-predict(modFitRF, newdata=testingPML)
+# confusionMatrix(predictions, testingPML$classe)
+```
+
+##Treebag
+```{r, cache=TRUE}
+# modFitTreeBag<-train(classe~.,method="treebag",data=trainingPML)
+# plot(varImp(modFitTreeBag))
+# predictions<-predict(modFitTreeBag, newdata=testingPML)
+# confusionMatrix(predictions, testingPML$classe)
+```
+##BagFDA
+```{r, cache=TRUE}
+#Estimate Error rates
+# modFitBagFDA<-train(classe~.,method="bagFDA",data=trainingPML)
+# plot(varImp(modFitBagFDA))
+# predictions<-predict(modFitBagFDA, newdata=testingPML)
+# confusionMatrix(predictions, testingPML$classe)
+```
