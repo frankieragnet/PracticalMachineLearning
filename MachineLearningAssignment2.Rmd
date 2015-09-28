@@ -14,7 +14,7 @@ More information is available from the website here: http://groupware.les.inf.pu
 
 ##Loading and preprocessing the data
 We will download the main file from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv and the much smaller validation file from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv.
-We will be using the first dataset for our model building (split into training and testing), then the second dataset as evaluation.
+We will be using the first dataset for our model building (split into training and testing), then the second dataset as evaluation (rather than using cross-validation)
 ```{r results="hide", cache=TRUE}
 # setwd("C:\\Local\\My local Documents\\Training\\Data Analytics\\Practical machine learning\\Project")
 # download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", dest="pml-training.csv")
@@ -47,6 +47,10 @@ summary(pmlMain[,1:10])
 ```
 
 ```{r, cache=TRUE}
+#Before we go into heavy algorithms, let's enable parallel processing
+library(doParallel)
+registerDoParallel(cores=3)
+#Now plot the first variables
 library(caret); library(kernlab)
 featurePlot(x=pmlMain[,c("X","user_name","raw_timestamp_part_2","num_window")],y=pmlMain$classe,plot="pairs")
 ```
@@ -63,7 +67,7 @@ pmlValidation<-pmlValidation[,-c(1:7)]
 
 #Preparing the dataset
 First, let's create a training set and a testing set, using 75% of samples for training.
-```{r, cache=TRUE}
+```{r, cache=TRUE, result="hide"}
 set.seed(7081971)
 inTrain<-createDataPartition(y=pmlMain$classe, p=0.75, list = FALSE)
 trainingPML<-pmlMain[inTrain,]
@@ -74,26 +78,40 @@ testingPML<-pmlMain[-inTrain,]
 In this part we'll try a few categorization models that can produce a factor output, plot the importance of the variables, then build a few models and estimate the Out-of-Sample Error rate.
 
 Let's first set our code to use multiple cores - if not, training certain models can be extremely long.
-```{r, cache=TRUE, echo=FALSE}
+```{r, results="hide"}
 library(doParallel)
 registerDoParallel(cores=3)
 ```
 
-##Gradient Boosted Model training
-Let's start with a boosted tree model.
-```{r, cache=TRUE, echo=FALSE}
-#Build our model
-modFitGBM<-train(classe~.,method="gbm",data=trainingPML)
+##Gradient Boosted Model
+Let's start with a boosted tree model. A simple model could have been built using:
+```{r, cache=TRUE}
+#Build our basic (simple validation) model
+#modFitGBM<-train(classe~.,method="gbm",data=trainingPML)
 ```
 
-Let's look at a summary of our  model, including variable importance.
+### Cross-validation training
+**Contrarily to what I said in the submission on the Coursera side, I was able to introduce cross-validation in time for the deadline**
+We will use 5-fold cross validation to train our model:
+```{r, cache=TRUE}
+fitControl <- trainControl(method = "repeatedcv", number = 5, repeats = 5)
+```
+
+```{r, cache=TRUE,results="hide"}
+#Build our 5-fold cross validation model
+modFitGBM<-train(classe~.,method="gbm",trControl = fitControl, verbose = FALSE, data=trainingPML)
+```
+
+Let's look at variable importance.
 ```{r, cache=TRUE}
 #Plot variable importance
 plot(varImp(modFitGBM))
 ```
 
-###GBM Prediction Accuracy and Error rate
-We can now predict on the testing dataset and estimate accuracy of the model.
+*roll_belt* is the most important predictor, followed by *pitch_forearm*, *yaw_belt*, then others
+
+###Prediction Accuracy and Error rate
+We can now predict on the testing dataset to estimate out-of-sample accuracy and error rate of the model.
 
 ```{r, cache=TRUE}
 predictions<-predict(modFitGBM, newdata=testingPML)
@@ -101,13 +119,12 @@ predictions<-predict(modFitGBM, newdata=testingPML)
 confusionMatrix(predictions, testingPML$classe)
 ```
 
-Results look good. The **out-of-sample error rate is around 4%**, with the confidence intervals above.
+Results look good. The **out-of-sample error rate is around 4%**, with the confidence intervals shown above.
 
-##Evaluation on the test dataset
-
+###Evaluation on the validation dataset
+The objective of this exercise was also to predict the results on 20 new values.
 ```{r}
 predictions<-predict(modFitGBM, newdata=pmlValidation)
-#Estimate Prediction accuracy
 ```
 
 Let's create one file per answer using the following function:
@@ -121,27 +138,31 @@ pml_write_files = function(x){
   }
 }
 ```
-Let's write our predictions in the results subdirectory:
+
+we'll write our predictions in the results subdirectory/
+
 ```{r, cache=TRUE}
-dir.create("GBMresults")
+dir.create("results")
 setwd("results")
 pml_write_files(predictions)
 ```
 
-#Further investigations
-
-By lack of time, I was not able to re-train many other categorizers without the non-sensor data. I had trained most of the categorizers below on the full dataset (excluding X, but not the various timestamps), until realizing I should exclude them from the predictors as they seem to produce results too good to be true.
-
 ##RPART
+We then tried a second training type - a classification tree, with RPART.
 ```{r, cache=TRUE}
 modFitRPART<-train(classe~.,method="rpart",data=trainingPML)
-plot(varImp(modFitRPART))
+#plot(varImp(modFitRPART))
 predictions<-predict(modFitRPART, newdata=testingPML)
 confusionMatrix(predictions, testingPML$classe)
 ```
-The important variables are not the same, which is suspicious. This model is not working well, as the Accuracy shows. 
+This model is not working well at all, as indicated by the resulting Accuracy (around 50%!).
+
+#Further investigations
+
+Here are a few other models we were planning to run, but were not able to because of time:
 
 ##GBM PCA
+Principal Component Analysis with Gradient Boosted Model
 ```{r, cache=TRUE}
 #Estimate Error rates
 # modFitGBMPCA<-train(classe~.,method="gbm",preProcess="pca",data=trainingPML)
@@ -149,6 +170,7 @@ The important variables are not the same, which is suspicious. This model is not
 # confusionMatrix(predictions, testingPML$classe)
 ```
 ##Random Forest
+Random Forest
 ```{r, cache=TRUE}
 #Estimate Error rates
 # modFitRF<-train(classe~.,method="rf",data=trainingPML)
@@ -158,6 +180,7 @@ The important variables are not the same, which is suspicious. This model is not
 ```
 
 ##Treebag
+Bagging option 1
 ```{r, cache=TRUE}
 # modFitTreeBag<-train(classe~.,method="treebag",data=trainingPML)
 # plot(varImp(modFitTreeBag))
@@ -165,6 +188,7 @@ The important variables are not the same, which is suspicious. This model is not
 # confusionMatrix(predictions, testingPML$classe)
 ```
 ##BagFDA
+Bagging option 2
 ```{r, cache=TRUE}
 #Estimate Error rates
 # modFitBagFDA<-train(classe~.,method="bagFDA",data=trainingPML)
